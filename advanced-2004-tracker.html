@@ -1,0 +1,1481 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<title>SCORM 2004 SimpleAPI - Enhanced Tracking</title>
+<link href='http://fonts.googleapis.com/css?family=Leckerli+One' rel='stylesheet' type='text/css'>
+<script type="text/javascript">
+(function(){
+
+	this._VERSION = "1.1.0";
+	
+	// Configuration Options
+	this.launchFile = 'index.html';
+	this.cookieName = 'SCORM2004_Data_' + _VERSION;
+	this.useParentFolderAsCookieName = true;
+	this.closeOnFinish = true;
+	this.wWidth = 1200;
+	this.wHeight = 800;
+	this.wToolbar = false;
+	this.wTitlebar = false;
+	this.wLocation = true;
+	this.wStatus = true;
+	this.wScrollbars = true;
+	this.wResizable = true;
+	this.wMenubar = false;
+
+	// SCORM 2004 Initial Data Model
+	this.initialState = {
+		'cmi._version': '1.0',
+		'cmi.completion_status': 'unknown',
+		'cmi.completion_threshold': '',
+		'cmi.credit': 'credit',
+		'cmi.entry': 'ab-initio',
+		'cmi.exit': '',
+		'cmi.learner_id': 'student_001',
+		'cmi.learner_name': 'John Doe',
+		'cmi.learner_preference._children': 'audio_level,language,delivery_speed,audio_captioning',
+		'cmi.learner_preference.audio_level': '1',
+		'cmi.learner_preference.language': '',
+		'cmi.learner_preference.delivery_speed': '1',
+		'cmi.learner_preference.audio_captioning': '0',
+		'cmi.location': '',
+		'cmi.max_time_allowed': '',
+		'cmi.mode': 'normal',
+		'cmi.objectives._children': 'id,score,success_status,completion_status,progress_measure,description',
+		'cmi.objectives._count': '0',
+		'cmi.progress_measure': '',
+		'cmi.scaled_passing_score': '',
+		'cmi.score._children': 'scaled,raw,min,max',
+		'cmi.score.scaled': '',
+		'cmi.score.raw': '',
+		'cmi.score.min': '',
+		'cmi.score.max': '',
+		'cmi.session_time': 'PT0H0M0S',
+		'cmi.success_status': 'unknown',
+		'cmi.suspend_data': '',
+		'cmi.time_limit_action': 'continue,no message',
+		'cmi.total_time': 'PT0H0M0S',
+		'cmi.interactions._children': 'id,type,objectives,timestamp,correct_responses,weighting,learner_response,result,latency,description',
+		'cmi.interactions._count': '0'
+	};
+
+	// Global variables
+	this.scoWin;
+	this.API_1484_11;
+	this.hasTerminated = false;
+	this.hasInitialized = false;
+	this.initTimeout = 0;
+	this.initTimeoutMax = 20000;
+	this.timeoutErrorDisplayed = false;
+	this.fullPath = document.location.href.substr(0,document.location.href.lastIndexOf('/'));
+	this.parentFolder = fullPath.substr(fullPath.lastIndexOf('/')+1,fullPath.length);
+	this.storageObject;
+
+	// Enhanced tracking
+	this.trackingData = {
+		interactions: [],
+		objectives: [],
+		components: {},
+		timeline: [],
+		errors: [],
+		analytics: {
+			totalSetValueCalls: 0,
+			totalGetValueCalls: 0,
+			totalCommits: 0,
+			completionEvents: [],
+			suspendDataUpdates: []
+		}
+	};
+
+	// SCORM 2004 API Implementation with Enhanced Tracking
+	this.SCORM2004API = function(cookiename, initData) {
+		this.cookiename = cookiename;
+		this.initData = initData;
+		this.__data = {};
+		this.initialized = false;
+		this.terminated = false;
+		this.lastError = "0";
+		this.lastCmd = '';
+		this.sessionStartTime = new Date();
+		this.objectives = {};
+		this.interactions = {};
+
+		// Copy initial data
+		for(var prop in initData) {
+			this.__data[prop] = initData[prop];
+		}
+
+		this.logCommand = function() {
+			Utils.log(this.lastCmd, 'entry');
+			
+			// Add to timeline
+			trackingData.timeline.push({
+				timestamp: new Date().toISOString(),
+				command: this.lastCmd,
+				error: this.lastError,
+				sessionTime: Utils.getSessionDuration()
+			});
+
+			if (this.lastError !== "0") {
+				var errorString = this.GetErrorString(this.lastError);
+				var diagnostic = this.GetDiagnostic(this.lastError);
+				var msg = "Error Calling: " + this.lastCmd + "<br>";
+				msg += "GetLastError() = " + this.lastError + "<br>";
+				msg += "GetErrorString('" + this.lastError + "') = " + errorString + "<br>";
+				msg += "GetDiagnostic('" + this.lastError + "') = " + diagnostic;
+				Utils.log(msg, 'error');
+
+				// Track error
+				trackingData.errors.push({
+					timestamp: new Date().toISOString(),
+					command: this.lastCmd,
+					errorCode: this.lastError,
+					errorString: errorString,
+					diagnostic: diagnostic
+				});
+			}
+		};
+
+		// Initialize
+		this.Initialize = function(parameter) {
+			if (parameter !== "") {
+				this.lastError = "201";
+				this.lastCmd = "Initialize('" + parameter + "') = false";
+				this.logCommand();
+				return "false";
+			}
+
+			if (this.initialized) {
+				this.lastError = "103";
+				this.lastCmd = "Initialize('" + parameter + "') = false";
+				this.logCommand();
+				return "false";
+			}
+
+			if (this.terminated) {
+				this.lastError = "104";
+				this.lastCmd = "Initialize('" + parameter + "') = false";
+				this.logCommand();
+				return "false";
+			}
+
+			// Load existing data if available
+			var existingData = Utils.getInitAPIData(this.initData);
+			if (existingData) {
+				this.__data = existingData;
+			}
+
+			this.initialized = true;
+			this.sessionStartTime = new Date();
+			this.lastError = "0";
+			this.lastCmd = "Initialize('" + parameter + "') = true";
+			this.logCommand();
+			hasInitialized = true;
+
+			// Track initialization
+			trackingData.timeline.push({
+				timestamp: new Date().toISOString(),
+				event: 'INITIALIZE',
+				details: 'Course session started'
+			});
+
+			Utils.log('🚀 Session initialized - tracking started', 'tracking');
+			return "true";
+		};
+
+		// Terminate
+		this.Terminate = function(parameter) {
+			if (parameter !== "") {
+				this.lastError = "201";
+				this.lastCmd = "Terminate('" + parameter + "') = false";
+				this.logCommand();
+				return "false";
+			}
+
+			if (!this.initialized) {
+				this.lastError = "112";
+				this.lastCmd = "Terminate('" + parameter + "') = false";
+				this.logCommand();
+				return "false";
+			}
+
+			if (this.terminated) {
+				this.lastError = "113";
+				this.lastCmd = "Terminate('" + parameter + "') = false";
+				this.logCommand();
+				return "false";
+			}
+
+			// Calculate total time
+			var sessionTime = this.__data['cmi.session_time'] || 'PT0H0M0S';
+			var totalTime = this.__data['cmi.total_time'] || 'PT0H0M0S';
+			this.__data['cmi.total_time'] = Utils.addISO8601Duration(totalTime, sessionTime);
+
+			// Generate final analytics report
+			Utils.generateFinalReport();
+
+			// Save data
+			var dataString = JSON.stringify(this.__data);
+			storageObject.persist(this.cookiename, dataString, 365);
+
+			// Save tracking data
+			storageObject.persist(this.cookiename + '_tracking', JSON.stringify(trackingData), 365);
+
+			this.initialized = false;
+			this.terminated = true;
+			this.lastError = "0";
+			this.lastCmd = "Terminate('" + parameter + "') = true";
+			this.logCommand();
+			hasTerminated = true;
+
+			Utils.log('🏁 Session terminated - final tracking data saved', 'tracking');
+
+			if(closeOnFinish && scoWin && !scoWin.closed) {
+				Utils.closeSCO();
+			}
+
+			return "true";
+		};
+
+		// GetValue with tracking
+		this.GetValue = function(element) {
+			trackingData.analytics.totalGetValueCalls++;
+
+			if (!this.initialized) {
+				this.lastError = "122";
+				this.lastCmd = "GetValue('" + element + "') = ";
+				this.logCommand();
+				return "";
+			}
+
+			if (this.terminated) {
+				this.lastError = "123";
+				this.lastCmd = "GetValue('" + element + "') = ";
+				this.logCommand();
+				return "";
+			}
+
+			var value = this.processGetValue(element);
+			this.lastCmd = "GetValue('" + element + "') = " + value;
+			this.logCommand();
+
+			// Track specific gets
+			if (element.indexOf('completion_status') !== -1 || 
+				element.indexOf('success_status') !== -1 ||
+				element.indexOf('progress_measure') !== -1) {
+				Utils.log('📊 Status check: ' + element + ' = ' + value, 'tracking');
+			}
+
+			return value;
+		};
+
+		// SetValue with enhanced tracking
+		this.SetValue = function(element, value) {
+			trackingData.analytics.totalSetValueCalls++;
+
+			if (!this.initialized) {
+				this.lastError = "132";
+				this.lastCmd = "SetValue('" + element + "','" + value + "') = false";
+				this.logCommand();
+				return "false";
+			}
+
+			if (this.terminated) {
+				this.lastError = "133";
+				this.lastCmd = "SetValue('" + element + "','" + value + "') = false";
+				this.logCommand();
+				return "false";
+			}
+
+			var oldValue = this.__data[element];
+			var success = this.processSetValue(element, value);
+			this.lastCmd = "SetValue('" + element + "','" + value + "') = " + (success ? "true" : "false");
+			this.logCommand();
+
+			// Enhanced tracking for specific elements
+			if (success) {
+				this.trackElementChange(element, oldValue, value);
+			}
+
+			return success ? "true" : "false";
+		};
+
+		// Track element changes
+		this.trackElementChange = function(element, oldValue, newValue) {
+			var timestamp = new Date().toISOString();
+			var sessionTime = Utils.getSessionDuration();
+
+			// Track completion status changes
+			if (element.indexOf('completion_status') !== -1) {
+				trackingData.analytics.completionEvents.push({
+					timestamp: timestamp,
+					element: element,
+					oldValue: oldValue,
+					newValue: newValue,
+					sessionTime: sessionTime
+				});
+				Utils.log('✅ Completion status: ' + element + ' changed from "' + oldValue + '" to "' + newValue + '"', 'completion');
+			}
+
+			// Track interactions
+			if (element.indexOf('cmi.interactions.') === 0) {
+				var parts = element.split('.');
+				var interactionIndex = parts[2];
+				var property = parts.slice(3).join('.');
+
+				if (!trackingData.interactions[interactionIndex]) {
+					trackingData.interactions[interactionIndex] = {
+						index: interactionIndex,
+						id: '',
+						type: '',
+						timestamp: timestamp,
+						properties: {},
+						completionTime: null
+					};
+				}
+
+				trackingData.interactions[interactionIndex].properties[property] = newValue;
+
+				if (property === 'id') {
+					trackingData.interactions[interactionIndex].id = newValue;
+					Utils.log('🎯 New interaction: ' + newValue, 'interaction');
+				} else if (property === 'result') {
+					trackingData.interactions[interactionIndex].completionTime = timestamp;
+					Utils.log('📝 Interaction completed: ' + trackingData.interactions[interactionIndex].id + ' = ' + newValue, 'interaction');
+				}
+			}
+
+			// Track objectives
+			if (element.indexOf('cmi.objectives.') === 0) {
+				var parts = element.split('.');
+				var objectiveIndex = parts[2];
+				var property = parts.slice(3).join('.');
+
+				if (!trackingData.objectives[objectiveIndex]) {
+					trackingData.objectives[objectiveIndex] = {
+						index: objectiveIndex,
+						id: '',
+						properties: {},
+						timestamp: timestamp
+					};
+				}
+
+				trackingData.objectives[objectiveIndex].properties[property] = newValue;
+
+				if (property === 'id') {
+					trackingData.objectives[objectiveIndex].id = newValue;
+					Utils.log('🎯 New objective: ' + newValue, 'objective');
+				} else if (property === 'completion_status' || property === 'success_status') {
+					Utils.log('📊 Objective status: ' + trackingData.objectives[objectiveIndex].id + ' ' + property + ' = ' + newValue, 'objective');
+				}
+			}
+
+			// Track suspend data changes (often contains component progress)
+			if (element === 'cmi.suspend_data') {
+				trackingData.analytics.suspendDataUpdates.push({
+					timestamp: timestamp,
+					data: newValue,
+					length: newValue.length,
+					sessionTime: sessionTime
+				});
+				Utils.log('💾 Suspend data updated (' + newValue.length + ' chars)', 'data');
+				
+				// Try to parse suspend data for component info
+				Utils.parseSuspendData(newValue);
+			}
+
+			// Track progress measure
+			if (element === 'cmi.progress_measure') {
+				Utils.log('📈 Progress: ' + (parseFloat(newValue) * 100).toFixed(1) + '%', 'progress');
+			}
+
+			// Track score changes
+			if (element.indexOf('cmi.score.') === 0) {
+				Utils.log('🎯 Score update: ' + element + ' = ' + newValue, 'score');
+			}
+		};
+
+		// Commit with tracking
+		this.Commit = function(parameter) {
+			trackingData.analytics.totalCommits++;
+
+			if (parameter !== "") {
+				this.lastError = "201";
+				this.lastCmd = "Commit('" + parameter + "') = false";
+				this.logCommand();
+				return "false";
+			}
+
+			if (!this.initialized) {
+				this.lastError = "142";
+				this.lastCmd = "Commit('" + parameter + "') = false";
+				this.logCommand();
+				return "false";
+			}
+
+			if (this.terminated) {
+				this.lastError = "143";
+				this.lastCmd = "Commit('" + parameter + "') = false";
+				this.logCommand();
+				return "false";
+			}
+
+			var dataString = JSON.stringify(this.__data);
+			storageObject.persist(this.cookiename, dataString, 365);
+			
+			// Also save tracking data
+			storageObject.persist(this.cookiename + '_tracking', JSON.stringify(trackingData), 365);
+
+			this.lastError = "0";
+			this.lastCmd = "Commit('" + parameter + "') = true";
+			this.logCommand();
+
+			Utils.log('💾 Data committed (Total commits: ' + trackingData.analytics.totalCommits + ')', 'commit');
+			return "true";
+		};
+
+		// GetLastError
+		this.GetLastError = function() {
+			return this.lastError;
+		};
+
+		// GetErrorString
+		this.GetErrorString = function(errorCode) {
+			switch(errorCode) {
+				case "0": return "No error";
+				case "101": return "General exception";
+				case "102": return "General Initialization Failure";
+				case "103": return "Already Initialized";
+				case "104": return "Content Instance Terminated";
+				case "111": return "General Termination Failure";
+				case "112": return "Termination Before Initialization";
+				case "113": return "Termination After Termination";
+				case "122": return "Retrieve Data Before Initialization";
+				case "123": return "Retrieve Data After Termination";
+				case "132": return "Store Data Before Initialization";
+				case "133": return "Store Data After Termination";
+				case "142": return "Commit Before Initialization";
+				case "143": return "Commit After Termination";
+				case "201": return "General Argument Error";
+				case "301": return "General Get Failure";
+				case "351": return "General Set Failure";
+				case "391": return "General Commit Failure";
+				case "401": return "Undefined Data Model Element";
+				case "402": return "Unimplemented Data Model Element";
+				case "403": return "Data Model Element Value Not Initialized";
+				case "404": return "Data Model Element Is Read Only";
+				case "405": return "Data Model Element Is Write Only";
+				case "406": return "Data Model Element Type Mismatch";
+				case "407": return "Data Model Element Value Out Of Range";
+				case "408": return "Data Model Dependency Not Established";
+				default: return "";
+			}
+		};
+
+		// GetDiagnostic
+		this.GetDiagnostic = function(errorCode) {
+			return this.GetErrorString(errorCode);
+		};
+
+		// Process GetValue
+		this.processGetValue = function(element) {
+			this.lastError = "0";
+
+			// Handle _children and _count
+			if (element.indexOf('_children') !== -1) {
+				if (this.__data[element]) {
+					return this.__data[element];
+				} else {
+					this.lastError = "401";
+					return "";
+				}
+			}
+
+			if (element.indexOf('_count') !== -1) {
+				var baseElement = element.replace('._count', '');
+				if (baseElement === 'cmi.objectives') {
+					return this.__data['cmi.objectives._count'] || "0";
+				} else if (baseElement === 'cmi.interactions') {
+					return this.__data['cmi.interactions._count'] || "0";
+				} else {
+					this.lastError = "401";
+					return "";
+				}
+			}
+
+			// Handle array elements
+			if (element.match(/cmi\.(objectives|interactions)\.\d+\./)) {
+				return this.getArrayElement(element);
+			}
+
+			// Handle regular elements
+			if (this.__data.hasOwnProperty(element)) {
+				return this.__data[element] || "";
+			} else {
+				this.lastError = "403";
+				return "";
+			}
+		};
+
+		// Process SetValue
+		this.processSetValue = function(element, value) {
+			this.lastError = "0";
+
+			// Check for read-only elements
+			var readOnlyElements = [
+				'cmi._version', 'cmi.credit', 'cmi.entry', 'cmi.learner_id', 'cmi.learner_name',
+				'cmi.max_time_allowed', 'cmi.mode', 'cmi.scaled_passing_score', 'cmi.time_limit_action',
+				'cmi.total_time', 'cmi.objectives._children', 'cmi.objectives._count',
+				'cmi.interactions._children', 'cmi.interactions._count'
+			];
+
+			for (var i = 0; i < readOnlyElements.length; i++) {
+				if (element === readOnlyElements[i] || element.indexOf(readOnlyElements[i]) === 0) {
+					this.lastError = "404";
+					return false;
+				}
+			}
+
+			// Handle array elements
+			if (element.match(/cmi\.(objectives|interactions)\.\d+\./)) {
+				return this.setArrayElement(element, value);
+			}
+
+			// Validate and set value
+			if (this.validateElement(element, value)) {
+				this.__data[element] = value;
+				return true;
+			}
+
+			return false;
+		};
+
+		// Get array element
+		this.getArrayElement = function(element) {
+			var parts = element.split('.');
+			var arrayType = parts[1]; // objectives or interactions
+			var index = parseInt(parts[2]);
+			var property = parts.slice(3).join('.');
+
+			var count = parseInt(this.__data['cmi.' + arrayType + '._count'] || "0");
+			
+			if (index >= count) {
+				this.lastError = "301";
+				return "";
+			}
+
+			var key = 'cmi.' + arrayType + '.' + index + '.' + property;
+			return this.__data[key] || "";
+		};
+
+		// Set array element
+		this.setArrayElement = function(element, value) {
+			var parts = element.split('.');
+			var arrayType = parts[1]; // objectives or interactions
+			var index = parseInt(parts[2]);
+			var property = parts.slice(3).join('.');
+
+			var count = parseInt(this.__data['cmi.' + arrayType + '._count'] || "0");
+
+			// Auto-create new array elements
+			if (index === count) {
+				this.__data['cmi.' + arrayType + '._count'] = (count + 1).toString();
+			} else if (index > count) {
+				this.lastError = "351";
+				return false;
+			}
+
+			if (this.validateElement(element, value)) {
+				this.__data[element] = value;
+				return true;
+			}
+
+			return false;
+		};
+
+		// Validate element
+		this.validateElement = function(element, value) {
+			// Basic validation - can be expanded
+			if (element.indexOf('cmi.completion_status') !== -1) {
+				var validValues = ['completed', 'incomplete', 'not attempted', 'unknown'];
+				if (validValues.indexOf(value) === -1) {
+					this.lastError = "406";
+					return false;
+				}
+			}
+
+			if (element.indexOf('cmi.success_status') !== -1) {
+				var validValues = ['passed', 'failed', 'unknown'];
+				if (validValues.indexOf(value) === -1) {
+					this.lastError = "406";
+					return false;
+				}
+			}
+
+			return true;
+		};
+	};
+
+	// Enhanced Utilities
+	this.Utils = {
+		getInitAPIData: function(initData) {
+			var stored = storageObject.retrieve(API_1484_11.cookiename);
+			if (stored) {
+				try {
+					return JSON.parse(stored);
+				} catch(e) {
+					Utils.log('Error parsing stored data: ' + e, 'error');
+					return initData;
+				}
+			}
+			return initData;
+		},
+
+		getSessionDuration: function() {
+			if (!API_1484_11 || !API_1484_11.sessionStartTime) return 0;
+			return Math.round((new Date() - API_1484_11.sessionStartTime) / 1000);
+		},
+
+		addISO8601Duration: function(duration1, duration2) {
+			// Simple ISO 8601 duration addition - PT0H0M0S format
+			return duration1; // For now, just return the first duration
+		},
+
+		// Try to parse suspend data for component information
+		parseSuspendData: function(data) {
+			try {
+				// Common patterns in suspend data
+				if (data.indexOf('{') === 0) {
+					// JSON format
+					var parsed = JSON.parse(data);
+					if (parsed._components) {
+						Utils.log('📋 Component data found in suspend_data', 'data');
+						for (var compId in parsed._components) {
+							var comp = parsed._components[compId];
+							if (comp._isComplete) {
+								Utils.log('✅ Component completed: ' + compId, 'component');
+							}
+						}
+					}
+				} else if (data.indexOf('|') !== -1 || data.indexOf(',') !== -1) {
+					// Delimited format
+					Utils.log('📋 Delimited data in suspend_data: ' + data.substring(0, 100) + '...', 'data');
+				}
+			} catch(e) {
+				// Not parseable, just log it
+				Utils.log('📋 Raw suspend_data: ' + data.substring(0, 50) + '...', 'data');
+			}
+		},
+
+		// Generate final analytics report
+		generateFinalReport: function() {
+			var report = {
+				sessionDuration: Utils.getSessionDuration(),
+				totalInteractions: trackingData.interactions.length,
+				completedInteractions: 0,
+				totalObjectives: trackingData.objectives.length,
+				apiCalls: {
+					getValue: trackingData.analytics.totalGetValueCalls,
+					setValue: trackingData.analytics.totalSetValueCalls,
+					commits: trackingData.analytics.totalCommits
+				},
+				completionEvents: trackingData.analytics.completionEvents.length,
+				errors: trackingData.errors.length,
+				finalStatus: {
+					completion: API_1484_11.__data['cmi.completion_status'],
+					success: API_1484_11.__data['cmi.success_status'],
+					progress: API_1484_11.__data['cmi.progress_measure']
+				}
+			};
+
+			// Count completed interactions
+			for (var i = 0; i < trackingData.interactions.length; i++) {
+				if (trackingData.interactions[i].completionTime) {
+					report.completedInteractions++;
+				}
+			}
+
+			Utils.log('📊 FINAL REPORT:', 'report');
+			Utils.log('Session Duration: ' + report.sessionDuration + 's', 'report');
+			Utils.log('Interactions: ' + report.completedInteractions + '/' + report.totalInteractions + ' completed', 'report');
+			Utils.log('API Calls: ' + (report.apiCalls.getValue + report.apiCalls.setValue) + ' total', 'report');
+			Utils.log('Final Status: ' + report.finalStatus.completion + ' / ' + report.finalStatus.success, 'report');
+			if (report.errors > 0) {
+				Utils.log('⚠️ Errors encountered: ' + report.errors, 'error');
+			}
+
+			// Save report
+			storageObject.persist(API_1484_11.cookiename + '_report', JSON.stringify(report), 365);
+		},
+
+		log: function(status, style) {
+			var timeFix = function(time) {
+				return (time < 10) ? '0' + time : time;
+			};
+			var d = new Date();
+			var hrs = timeFix(d.getHours());
+			var min = timeFix(d.getMinutes());
+			var sec = timeFix(d.getSeconds());
+			
+			var styleClass = style || 'entry';
+			var icon = '';
+			
+			// Add icons based on style
+			switch(style) {
+				case 'tracking': icon = '📡 '; break;
+				case 'completion': icon = '✅ '; break;
+				case 'interaction': icon = '🎯 '; break;
+				case 'objective': icon = '📊 '; break;
+				case 'data': icon = '💾 '; break;
+				case 'progress': icon = '📈 '; break;
+				case 'score': icon = '🎯 '; break;
+				case 'commit': icon = '💾 '; break;
+				case 'component': icon = '📋 '; break;
+				case 'report': icon = '📊 '; break;
+				case 'error': icon = '❌ '; break;
+			}
+			
+			var tmp = '<div class="' + styleClass + '">';
+			tmp += '&gt; ' + hrs + ':' + min + ':' + sec + ' ' + icon + status;
+			tmp += '</div>';
+
+			$('debug').innerHTML += tmp;
+			$('debug').scrollTop = $('debug').scrollHeight;
+		},
+
+		clearStorageData: function() {
+			var cookieNameAltVal = $('cookieNameAlt').value;
+			var nameToUse = cookieNameAltVal.length > 0 ? cookieNameAltVal : cookieName;
+
+			// Clear main data
+			if (storageObject.retrieve(nameToUse)) {
+				storageObject.remove(nameToUse);
+				Utils.log('Main data cleared: "' + nameToUse + '"', 'info');
+			}
+
+			// Clear tracking data
+			if (storageObject.retrieve(nameToUse + '_tracking')) {
+				storageObject.remove(nameToUse + '_tracking');
+				Utils.log('Tracking data cleared: "' + nameToUse + '_tracking"', 'info');
+			}
+
+			// Clear report
+			if (storageObject.retrieve(nameToUse + '_report')) {
+				storageObject.remove(nameToUse + '_report');
+				Utils.log('Report cleared: "' + nameToUse + '_report"', 'info');
+			}
+
+			// Reset tracking data
+			trackingData = {
+				interactions: [],
+				objectives: [],
+				components: {},
+				timeline: [],
+				errors: [],
+				analytics: {
+					totalSetValueCalls: 0,
+					totalGetValueCalls: 0,
+					totalCommits: 0,
+					completionEvents: [],
+					suspendDataUpdates: []
+				}
+			};
+		},
+
+		exportTrackingData: function() {
+			var data = {
+				mainData: API_1484_11.__data,
+				trackingData: trackingData,
+				timestamp: new Date().toISOString(),
+				userAgent: navigator.userAgent
+			};
+			
+			var blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+			var url = URL.createObjectURL(blob);
+			var a = document.createElement('a');
+			a.href = url;
+			a.download = 'scorm-tracking-data-' + new Date().toISOString().substr(0,19).replace(/:/g,'-') + '.json';
+			document.body.appendChild(a);
+			a.click();
+			document.body.removeChild(a);
+			URL.revokeObjectURL(url);
+			
+			Utils.log('📥 Tracking data exported', 'info');
+		},
+
+		watchWin: function() {
+			if (scoWin && !scoWin.closed) {
+				initTimeout += 1000;
+				if (initTimeout >= initTimeoutMax) {
+					if (!API_1484_11.initialized && !timeoutErrorDisplayed) {
+						this.log('ERROR: Initialize not called within 20 seconds from launching.', 'error');
+						timeoutErrorDisplayed = true;
+					}
+				}
+				setTimeout(function() { Utils.watchWin(); }, 1000);
+			} else {
+				this.log('SCO Closed', 'info');
+				if (!hasInitialized) {
+					this.log('ERROR: Initialize was never called.', 'error');
+				}
+				if (!hasTerminated) {
+					this.log('ERROR: Terminate was never called.', 'error');
+				}
+			}
+		},
+
+		launchSCO: function() {
+			// Reset state
+			hasTerminated = false;
+			hasInitialized = false;
+			if (API_1484_11) {
+				API_1484_11.terminated = false;
+				API_1484_11.initialized = false;
+			}
+			initTimeout = 0;
+			timeoutErrorDisplayed = false;
+
+			var launchFileAltVal = $('launchFileAlt').value;
+			var cookieNameAltVal = $('cookieNameAlt').value;
+
+			if (launchFileAltVal.length > 0) {
+				launchFile = launchFileAltVal;
+			}
+
+			if (cookieNameAltVal.length > 0) {
+				API_1484_11.cookiename = cookieName = cookieNameAltVal;
+			}
+
+			try {
+				var w = ($('winW').value && $('winW').value > 0) ? $('winW').value : wWidth;
+				var h = ($('winH').value && $('winH').value > 0) ? $('winH').value : wHeight;
+
+				var opts = '';
+				opts += (wToolbar) ? 'toolbar=yes,' : '';
+				opts += (wTitlebar) ? 'titlebar=yes,' : '';
+				opts += (wLocation) ? 'location=yes,' : '';
+				opts += (wStatus) ? 'status=yes,' : '';
+				opts += (wScrollbars) ? 'scrollbars=yes,' : '';
+				opts += (wResizable) ? 'resizable=yes,' : '';
+				opts += (wMenubar) ? 'menubar=yes,' : '';
+				opts = opts.substring(0, opts.length - 1);
+
+				Utils.log("Launching SCO with enhanced tracking enabled", 'info');
+
+				scoWin = window.open(launchFile, "SCOwindow", opts + ",width=" + w + ",height=" + h);
+				scoWin.moveTo(0, 0);
+				scoWin.focus();
+
+				Utils.log('🚀 SCO Launched - tracking initialized', 'tracking');
+				this.watchWin();
+			} catch (e) {
+				Utils.log('ERROR: ' + e.description, 'error');
+			}
+		},
+
+		closeSCO: function() {
+			try {
+				if (scoWin && !scoWin.closed) {
+					Utils.log('Attempting to close SCO window...', 'info');
+					scoWin.close();
+				}
+			} catch(e) {
+				Utils.log('ERROR: Unable to close SCO window (' + e.description + ')', 'error');
+			}
+		},
+
+		toggleDisplay: function(elm) {
+			$(elm).style.display = ($(elm).style.display == 'block') ? 'none' : 'block';
+		},
+
+		toggleCloseOnFinishOption: function(chkd) {
+			closeOnFinish = chkd;
+		},
+
+		toggleWindowOption: function(prop, el) {
+			window[prop] = el.checked;
+		},
+
+		enableAllWindowOptions: function() {
+			wToolbar = wTitlebar = wLocation = wStatus = wScrollbars = wResizable = wMenubar = true;
+			$('wToolbarOption').checked = true;
+			$('wTitlebarOption').checked = true;
+			$('wLocationOption').checked = true;
+			$('wStatusOption').checked = true;
+			$('wScrollbarsOption').checked = true;
+			$('wResizableOption').checked = true;
+			$('wMenubarOption').checked = true;
+		},
+
+		disableAllWindowOptions: function() {
+			wToolbar = wTitlebar = wLocation = wStatus = wScrollbars = wResizable = wMenubar = false;
+			$('wToolbarOption').checked = false;
+			$('wTitlebarOption').checked = false;
+			$('wLocationOption').checked = false;
+			$('wStatusOption').checked = false;
+			$('wScrollbarsOption').checked = false;
+			$('wResizableOption').checked = false;
+			$('wMenubarOption').checked = false;
+		}
+	};
+
+	// Initialize the API
+	this.init = function() {
+		scoWin = null;
+
+		if (useParentFolderAsCookieName) {
+			cookieName = parentFolder;
+		}
+
+		// Create SCORM 2004 API
+		API_1484_11 = new SCORM2004API(cookieName, initialState);
+
+		// Expose API to window - SCORM 2004 uses API_1484_11
+		window.API_1484_11 = API_1484_11;
+
+		// Also expose to parent frames for iframe access
+		if (window.parent && window.parent !== window) {
+			window.parent.API_1484_11 = API_1484_11;
+		}
+		if (window.top && window.top !== window) {
+			window.top.API_1484_11 = API_1484_11;
+		}
+
+		// Storage setup
+		if (typeof(Storage) !== "undefined") {
+			try {
+				if (('localStorage' in window) && window['localStorage'] && window.localStorage !== null) {
+					storageObject = localStorageObject;
+				} else {
+					storageObject = cookieStorageObject;
+				}
+			} catch(e) {
+				storageObject = cookieStorageObject;
+			}
+		} else {
+			storageObject = cookieStorageObject;
+		}
+
+		// UI setup
+		$('cookieNameAlt').value = cookieName;
+		$('winW').value = wWidth;
+		$('winH').value = wHeight;
+		$('wToolbarOption').checked = wToolbar;
+		$('wTitlebarOption').checked = wTitlebar;
+		$('wLocationOption').checked = wLocation;
+		$('wStatusOption').checked = wStatus;
+		$('wScrollbarsOption').checked = wScrollbars;
+		$('wResizableOption').checked = wResizable;
+		$('wMenubarOption').checked = wMenubar;
+
+		if (closeOnFinish) {
+			$('closeOnFinishOption').checked = true;
+		}
+
+		Utils.log('🔧 SCORM 2004 API with Enhanced Tracking initialized', 'info');
+		Utils.log('📊 Tracking: interactions, objectives, components, timeline', 'tracking');
+		Utils.log('💾 Storage: ' + storageObject.toString(), 'info');
+		Utils.log('🔗 API exposed as window.API_1484_11', 'info');
+
+		// Show/hide sections
+		Utils.toggleDisplay('optionSet');
+		Utils.toggleDisplay('debug');
+	};
+
+	this.$ = function(id) {
+		return document.getElementById(id);
+	};
+
+	// Storage objects
+	this.localStorageObject = {
+		persist: function(name, data, lifetime) {
+			localStorage[name] = data;
+		},
+		retrieve: function(name) {
+			return localStorage[name];
+		},
+		remove: function(name) {
+			delete localStorage[name];
+		},
+		toString: function() {
+			return "LocalStorage";
+		}
+	};
+
+	this.cookieStorageObject = {
+		persist: function(name, data, lifetime) {
+			saveCookie(name, data, lifetime);
+		},
+		retrieve: function(name) {
+			return readCookie(name);
+		},
+		remove: function(name) {
+			deleteCookie(name);
+		},
+		toString: function() {
+			return "Cookie";
+		}
+	};
+
+	window.onload = function() {
+		init();
+	};
+
+})();
+
+// Cookie Functions
+function saveCookie(name, value, days) {
+	var expires = "";
+	if (days) {
+		var date = new Date();
+		date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+		expires = "; expires=" + date.toGMTString();
+	}
+	document.cookie = name + "=" + value + expires + "; path=/";
+}
+
+function readCookie(name) {
+	var nameEQ = name + "=";
+	var ca = document.cookie.split(';');
+	for (var i = 0; i < ca.length; i++) {
+		var c = ca[i];
+		while (c.charAt(0) == ' ') c = c.substring(1, c.length);
+		if (c.indexOf(nameEQ) == 0) return c.substring(nameEQ.length, c.length);
+	}
+	return null;
+}
+
+function deleteCookie(name) {
+	saveCookie(name, "", -1);
+}
+</script>
+
+<style type="text/css">
+/* Reset and base styles */
+html, body, div, span, h1, h2, h3, h4, h5, h6, p, a, input, label, fieldset, legend {
+	margin: 0;
+	padding: 0;
+	border: 0;
+	font-size: 100%;
+	font: inherit;
+	vertical-align: baseline;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 1em;
+	background: #f0f0f0;
+	font-size: .85em;
+	font-family: verdana, arial, helvetica, geneva;
+	line-height: 1.4;
+}
+
+h1 {
+	font-family: 'Leckerli One', verdana, arial, helvetica, geneva;
+	font-size: 2em;
+	margin: .5em;
+	color: #f60;
+	text-shadow: 0 2px 1px #ccc;
+}
+
+a, a:hover, a:link, a:visited {
+	color: #3A95C5;
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+/* Layout */
+div#container {
+	border: 1px solid #ccc;
+	padding: 10px;
+	background: #fff;
+	border-radius: 10px;
+}
+
+div#header {
+	text-align: center;
+	color: #666;
+	margin: 0 0 1em 0;
+	border-bottom: 1px dotted #999;
+	padding: 0 0 1em 0;
+}
+
+div#links {
+	margin: 10px 0;
+	padding: 5px;
+	border: 1px solid #3A95C5;
+	background: #EBF4FA;
+	color: #97C6E6;
+	border-radius: 5px;
+}
+
+/* Form elements */
+fieldset {
+	padding: 10px;
+	margin: 15px 5px 20px 5px;
+	border-radius: 5px;
+	border: 1px solid #ccc;
+}
+
+legend {
+	padding: .3em .5em;
+	border-radius: 5px;
+	border: 1px solid #ccc;
+	background: #f6f6f6;
+	color: #333;
+	font-size: 1.5em;
+	font-family: 'Leckerli One', verdana, arial, helvetica, geneva;
+}
+
+legend b {
+	font-size: .70em;
+	font-family: verdana, arial, helvetica, geneva;
+}
+
+input {
+	font-size: 1em;
+	font-family: consolas, courier new, courier, fixed;
+	vertical-align: middle;
+	border: 2px solid #ccc;
+	padding: 2px 4px;
+}
+
+input:hover {
+	border: 2px solid #97C6E6;
+}
+
+input:focus {
+	border: 2px solid #3A95C5;
+}
+
+label {
+	color: #000;
+	font-size: 1em;
+	vertical-align: middle;
+	margin-right: 10px;
+}
+
+label:hover {
+	color: #3A95C5;
+}
+
+/* Debug console with enhanced styles */
+div#debug {
+	background: #1a1a1a;
+	border: 4px solid #666;
+	height: 400px;
+	overflow: auto;
+	margin: 5px;
+	font-family: consolas, "courier new", courier, fixed;
+	font-size: 13px;
+}
+
+div.entry, div.error, div.info, div.tracking, div.completion, div.interaction, 
+div.objective, div.data, div.progress, div.score, div.commit, div.component, div.report {
+	margin: .4em .2em;
+	text-shadow: 0 1px 2px #000;
+	padding: 2px 4px;
+	border-left: 3px solid transparent;
+}
+
+div.entry {
+	color: #9c0;
+	border-left-color: #9c0;
+}
+
+div.info {
+	color: #ccc;
+	border-left-color: #ccc;
+}
+
+div.error {
+	color: #f66;
+	border-left-color: #f66;
+	background: rgba(255, 102, 102, 0.1);
+}
+
+div.tracking {
+	color: #66ccff;
+	border-left-color: #66ccff;
+}
+
+div.completion {
+	color: #66ff66;
+	border-left-color: #66ff66;
+	background: rgba(102, 255, 102, 0.1);
+}
+
+div.interaction {
+	color: #ffcc66;
+	border-left-color: #ffcc66;
+}
+
+div.objective {
+	color: #cc66ff;
+	border-left-color: #cc66ff;
+}
+
+div.data {
+	color: #66ffcc;
+	border-left-color: #66ffcc;
+}
+
+div.progress {
+	color: #ffff66;
+	border-left-color: #ffff66;
+}
+
+div.score {
+	color: #ff6666;
+	border-left-color: #ff6666;
+}
+
+div.commit {
+	color: #66cccc;
+	border-left-color: #66cccc;
+}
+
+div.component {
+	color: #cc9966;
+	border-left-color: #cc9966;
+}
+
+div.report {
+	color: #ff9966;
+	border-left-color: #ff9966;
+	background: rgba(255, 153, 102, 0.1);
+	font-weight: bold;
+}
+
+/* Form layout */
+.tblRow {
+	margin: 10px 0;
+	clear: both;
+}
+
+.tblRowHeader {
+	float: left;
+	width: 120px;
+	font-weight: bold;
+	color: #333;
+	margin-right: 10px;
+}
+
+.tblRowInstructions {
+	clear: both;
+	font-size: 1em;
+	color: #666;
+	margin: 20px 0 10px 0;
+	padding: .5em 0;
+	border-bottom: 1px solid #ccc;
+}
+
+.inlineOption {
+	display: inline-block;
+	margin-right: 15px;
+}
+
+/* Status boxes */
+.status-box {
+	padding: 15px;
+	margin: 10px 0;
+	border-radius: 5px;
+	border: 2px solid;
+}
+
+.status-success {
+	background: #e8f5e8;
+	border-color: #4CAF50;
+	color: #2E7D32;
+}
+
+.status-info {
+	background: #fff3cd;
+	border-color: #ffc107;
+	color: #856404;
+}
+
+.status-warning {
+	background: #f8d7da;
+	border-color: #dc3545;
+	color: #721c24;
+}
+
+.status-box h3 {
+	margin: 0 0 10px 0;
+	font-weight: bold;
+}
+
+.status-box ul {
+	margin: 0;
+	padding-left: 20px;
+}
+
+.status-box ol {
+	margin: 0;
+	padding-left: 20px;
+}
+
+/* Utility classes */
+.align-right {
+	float: right;
+}
+
+.align-center {
+	text-align: center;
+}
+
+.version {
+	color: #ccc;
+}
+
+#desc {
+	font-style: italic;
+	color: #999;
+}
+
+/* Button styles */
+.export-btn {
+	background: #28a745;
+	color: white;
+	border: none;
+	padding: 8px 16px;
+	border-radius: 4px;
+	cursor: pointer;
+	margin: 5px;
+}
+
+.export-btn:hover {
+	background: #218838;
+}
+</style>
+</head>
+<body>
+<div id="container">
+	<div class="align-right version">v<script>document.write(_VERSION);</script></div>
+	<div id="header">
+		<h1>SCORM 2004 Enhanced Tracking</h1>
+		<div id="desc">Debug individual interactions and completion issues</div>
+	</div>
+
+	<div class="status-box status-success">
+		<h3>🔍 Enhanced Tracking Features:</h3>
+		<ul>
+			<li><strong>Individual Interactions:</strong> Track each interaction start/completion with timestamps</li>
+			<li><strong>Component Progress:</strong> Monitor individual component completion status</li>
+			<li><strong>Suspend Data Analysis:</strong> Parse and log component data from suspend_data</li>
+			<li><strong>Timeline Tracking:</strong> Complete timeline of all API calls and events</li>
+			<li><strong>Android Debugging:</strong> Identify where completion chains break</li>
+		</ul>
+	</div>
+
+	<div id="links">
+		<b><a href="javascript:void(0);" onclick="Utils.launchSCO(); return false;">Launch SCO</a></b> | 
+		<a href="javascript:void(0);" onclick="Utils.clearStorageData(); return false;">Clear All Data</a> | 
+		<a href="javascript:void(0);" onclick="$('debug').innerHTML=''; return false;">Clear Log</a> |
+		<button class="export-btn" onclick="Utils.exportTrackingData(); return false;">📥 Export Tracking Data</button> |
+		<a href="javascript:void(0);" onclick="document.location=document.location.href;return false;">Refresh</a>
+	</div>
+
+	<fieldset>
+		<legend>Enhanced Event Log <b>( <a href="javascript:void(0);" onclick="Utils.toggleDisplay('debug'); return false;">Toggle</a> )</b></legend>
+		<div class="status-box status-info">
+			<h3>🔎 What You'll See:</h3>
+			<ul>
+				<li><strong>🎯 Interactions:</strong> Each question/activity start and completion</li>
+				<li><strong>✅ Completion Events:</strong> When components/course marks as complete</li>
+				<li><strong>📊 Status Changes:</strong> completion_status and success_status updates</li>
+				<li><strong>💾 Data Updates:</strong> suspend_data changes with component info</li>
+				<li><strong>📈 Progress:</strong> progress_measure changes</li>
+				<li><strong>📋 Components:</strong> Individual component completion tracking</li>
+			</ul>
+		</div>
+		<div id="debug"></div>
+	</fieldset>
+
+	<fieldset>
+		<legend>Launch Options <b>( <a href="javascript:void(0);" onclick="Utils.toggleDisplay('optionSet'); return false;">Toggle</a> )</b></legend>
+		<div id="optionSet">
+			<div class="tblRowInstructions">Enter the path to your SCORM 2004 course's main file:</div>
+			<div class="tblRow">
+				<div class="tblRowHeader">Launch File:</div>
+				<input type="text" id="launchFileAlt" size="50" placeholder="index.html">
+			</div>
+			
+			<div class="tblRowInstructions">Storage name for this session:</div>
+			<div class="tblRow">
+				<div class="tblRowHeader">Storage Name:</div>
+				<input type="text" id="cookieNameAlt" size="50">
+			</div>
+			
+			<div class="tblRowInstructions">Window dimensions:</div>
+			<div class="tblRow">
+				<div class="tblRowHeader">Width:</div>
+				<input type="text" id="winW" size="10">
+			</div>
+			<div class="tblRow">
+				<div class="tblRowHeader">Height:</div>
+				<input type="text" id="winH" size="10">
+			</div>
+			
+			<div class="tblRowInstructions">Window features:</div>
+			<div class="tblRow">
+				<div class="tblRowHeader">Features:</div>
+				<div>
+					<div class="inlineOption">
+						<label><input type="checkbox" id="wToolbarOption" onclick="Utils.toggleWindowOption('wToolbar',this);"> Toolbar</label>
+					</div>
+					<div class="inlineOption">
+						<label><input type="checkbox" id="wTitlebarOption" onclick="Utils.toggleWindowOption('wTitlebar',this);"> Titlebar</label>
+					</div>
+					<div class="inlineOption">
+						<label><input type="checkbox" id="wLocationOption" onclick="Utils.toggleWindowOption('wLocation',this);"> Location</label>
+					</div>
+					<div class="inlineOption">
+						<label><input type="checkbox" id="wStatusOption" onclick="Utils.toggleWindowOption('wStatus',this);"> Status</label>
+					</div>
+					<div class="inlineOption">
+						<label><input type="checkbox" id="wScrollbarsOption" onclick="Utils.toggleWindowOption('wScrollbars',this);"> Scrollbars</label>
+					</div>
+					<div class="inlineOption">
+						<label><input type="checkbox" id="wResizableOption" onclick="Utils.toggleWindowOption('wResizable',this);"> Resizable</label>
+					</div>
+					<div class="inlineOption">
+						<label><input type="checkbox" id="wMenubarOption" onclick="Utils.toggleWindowOption('wMenubar',this);"> Menubar</label>
+					</div>
+				</div>
+				<div style="margin-top: 10px;">
+					<a href="#" onclick="Utils.enableAllWindowOptions();return false;">Select All</a> | 
+					<a href="#" onclick="Utils.disableAllWindowOptions();return false;">Deselect All</a>
+				</div>
+			</div>
+			
+			<div class="tblRowInstructions">Behavior options:</div>
+			<div class="tblRow">
+				<label><input type="checkbox" id="closeOnFinishOption" onclick="Utils.toggleCloseOnFinishOption(this.checked);"> Close SCO on Terminate</label>
+			</div>
+		</div>
+	</fieldset>
+
+	<div class="status-box status-warning">
+		<h3>🐛 Android Debugging Guide:</h3>
+		<ol>
+			<li><strong>Launch your course</strong> and watch the enhanced event log</li>
+			<li><strong>Look for interaction patterns:</strong> Do all interactions complete successfully?</li>
+			<li><strong>Monitor component completion:</strong> Which components complete vs. which don't?</li>
+			<li><strong>Check suspend_data updates:</strong> Is progress being saved correctly?</li>
+			<li><strong>Watch completion events:</strong> When does completion_status change to "completed"?</li>
+			<li><strong>Export tracking data</strong> to analyze patterns across different devices</li>
+		</ol>
+		<p><strong>Common Android Issues:</strong> Touch events not registering, timing issues with rapid interactions, memory constraints affecting large suspend_data.</p>
+	</div>
+</div>
+</body>
+</html>

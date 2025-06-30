@@ -1,0 +1,1074 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<title>SCORM 2004 SimpleAPI Test Environment</title>
+<link href='http://fonts.googleapis.com/css?family=Leckerli+One' rel='stylesheet' type='text/css'>
+<script type="text/javascript">
+(function(){
+
+	this._VERSION = "1.0.0";
+	
+	// Configuration Options
+	this.launchFile = 'index.html';
+	this.cookieName = 'SCORM2004_Data_' + _VERSION;
+	this.useParentFolderAsCookieName = true;
+	this.closeOnFinish = true;
+	this.wWidth = 1024;
+	this.wHeight = 768;
+	this.wToolbar = false;
+	this.wTitlebar = false;
+	this.wLocation = true;
+	this.wStatus = true;
+	this.wScrollbars = true;
+	this.wResizable = true;
+	this.wMenubar = false;
+
+	// SCORM 2004 Initial Data Model
+	this.initialState = {
+		'cmi._version': '1.0',
+		'cmi.completion_status': 'unknown',
+		'cmi.completion_threshold': '',
+		'cmi.credit': 'credit',
+		'cmi.entry': 'ab-initio',
+		'cmi.exit': '',
+		'cmi.learner_id': 'student_001',
+		'cmi.learner_name': 'John Doe',
+		'cmi.learner_preference._children': 'audio_level,language,delivery_speed,audio_captioning',
+		'cmi.learner_preference.audio_level': '1',
+		'cmi.learner_preference.language': '',
+		'cmi.learner_preference.delivery_speed': '1',
+		'cmi.learner_preference.audio_captioning': '0',
+		'cmi.location': '',
+		'cmi.max_time_allowed': '',
+		'cmi.mode': 'normal',
+		'cmi.objectives._children': 'id,score,success_status,completion_status,progress_measure,description',
+		'cmi.objectives._count': '0',
+		'cmi.progress_measure': '',
+		'cmi.scaled_passing_score': '',
+		'cmi.score._children': 'scaled,raw,min,max',
+		'cmi.score.scaled': '',
+		'cmi.score.raw': '',
+		'cmi.score.min': '',
+		'cmi.score.max': '',
+		'cmi.session_time': 'PT0H0M0S',
+		'cmi.success_status': 'unknown',
+		'cmi.suspend_data': '',
+		'cmi.time_limit_action': 'continue,no message',
+		'cmi.total_time': 'PT0H0M0S',
+		'cmi.interactions._children': 'id,type,objectives,timestamp,correct_responses,weighting,learner_response,result,latency,description',
+		'cmi.interactions._count': '0'
+	};
+
+	// Global variables
+	this.scoWin;
+	this.API_1484_11;
+	this.hasTerminated = false;
+	this.hasInitialized = false;
+	this.initTimeout = 0;
+	this.initTimeoutMax = 20000;
+	this.timeoutErrorDisplayed = false;
+	this.fullPath = document.location.href.substr(0,document.location.href.lastIndexOf('/'));
+	this.parentFolder = fullPath.substr(fullPath.lastIndexOf('/')+1,fullPath.length);
+	this.storageObject;
+
+	// SCORM 2004 API Implementation
+	this.SCORM2004API = function(cookiename, initData) {
+		this.cookiename = cookiename;
+		this.initData = initData;
+		this.__data = {};
+		this.initialized = false;
+		this.terminated = false;
+		this.lastError = "0";
+		this.lastCmd = '';
+		this.sessionStartTime = new Date();
+		this.objectives = {};
+		this.interactions = {};
+
+		// Copy initial data
+		for(var prop in initData) {
+			this.__data[prop] = initData[prop];
+		}
+
+		this.logCommand = function() {
+			Utils.log(this.lastCmd, 'entry');
+			if (this.lastError !== "0") {
+				var errorString = this.GetErrorString(this.lastError);
+				var diagnostic = this.GetDiagnostic(this.lastError);
+				var msg = "Error Calling: " + this.lastCmd + "<br>";
+				msg += "GetLastError() = " + this.lastError + "<br>";
+				msg += "GetErrorString('" + this.lastError + "') = " + errorString + "<br>";
+				msg += "GetDiagnostic('" + this.lastError + "') = " + diagnostic;
+				Utils.log(msg, 'error');
+			}
+		};
+
+		// Initialize
+		this.Initialize = function(parameter) {
+			if (parameter !== "") {
+				this.lastError = "201";
+				this.lastCmd = "Initialize('" + parameter + "') = false";
+				this.logCommand();
+				return "false";
+			}
+
+			if (this.initialized) {
+				this.lastError = "103";
+				this.lastCmd = "Initialize('" + parameter + "') = false";
+				this.logCommand();
+				return "false";
+			}
+
+			if (this.terminated) {
+				this.lastError = "104";
+				this.lastCmd = "Initialize('" + parameter + "') = false";
+				this.logCommand();
+				return "false";
+			}
+
+			// Load existing data if available
+			var existingData = Utils.getInitAPIData(this.initData);
+			if (existingData) {
+				this.__data = existingData;
+			}
+
+			this.initialized = true;
+			this.lastError = "0";
+			this.lastCmd = "Initialize('" + parameter + "') = true";
+			this.logCommand();
+			hasInitialized = true;
+			return "true";
+		};
+
+		// Terminate
+		this.Terminate = function(parameter) {
+			if (parameter !== "") {
+				this.lastError = "201";
+				this.lastCmd = "Terminate('" + parameter + "') = false";
+				this.logCommand();
+				return "false";
+			}
+
+			if (!this.initialized) {
+				this.lastError = "112";
+				this.lastCmd = "Terminate('" + parameter + "') = false";
+				this.logCommand();
+				return "false";
+			}
+
+			if (this.terminated) {
+				this.lastError = "113";
+				this.lastCmd = "Terminate('" + parameter + "') = false";
+				this.logCommand();
+				return "false";
+			}
+
+			// Calculate total time
+			var sessionTime = this.__data['cmi.session_time'] || 'PT0H0M0S';
+			var totalTime = this.__data['cmi.total_time'] || 'PT0H0M0S';
+			this.__data['cmi.total_time'] = Utils.addISO8601Duration(totalTime, sessionTime);
+
+			// Save data
+			var dataString = JSON.stringify(this.__data);
+			storageObject.persist(this.cookiename, dataString, 365);
+
+			this.initialized = false;
+			this.terminated = true;
+			this.lastError = "0";
+			this.lastCmd = "Terminate('" + parameter + "') = true";
+			this.logCommand();
+			hasTerminated = true;
+
+			if(closeOnFinish && scoWin && !scoWin.closed) {
+				Utils.closeSCO();
+			}
+
+			return "true";
+		};
+
+		// GetValue
+		this.GetValue = function(element) {
+			if (!this.initialized) {
+				this.lastError = "122";
+				this.lastCmd = "GetValue('" + element + "') = ";
+				this.logCommand();
+				return "";
+			}
+
+			if (this.terminated) {
+				this.lastError = "123";
+				this.lastCmd = "GetValue('" + element + "') = ";
+				this.logCommand();
+				return "";
+			}
+
+			var value = this.processGetValue(element);
+			this.lastCmd = "GetValue('" + element + "') = " + value;
+			this.logCommand();
+			return value;
+		};
+
+		// SetValue
+		this.SetValue = function(element, value) {
+			if (!this.initialized) {
+				this.lastError = "132";
+				this.lastCmd = "SetValue('" + element + "','" + value + "') = false";
+				this.logCommand();
+				return "false";
+			}
+
+			if (this.terminated) {
+				this.lastError = "133";
+				this.lastCmd = "SetValue('" + element + "','" + value + "') = false";
+				this.logCommand();
+				return "false";
+			}
+
+			var success = this.processSetValue(element, value);
+			this.lastCmd = "SetValue('" + element + "','" + value + "') = " + (success ? "true" : "false");
+			this.logCommand();
+			return success ? "true" : "false";
+		};
+
+		// Commit
+		this.Commit = function(parameter) {
+			if (parameter !== "") {
+				this.lastError = "201";
+				this.lastCmd = "Commit('" + parameter + "') = false";
+				this.logCommand();
+				return "false";
+			}
+
+			if (!this.initialized) {
+				this.lastError = "142";
+				this.lastCmd = "Commit('" + parameter + "') = false";
+				this.logCommand();
+				return "false";
+			}
+
+			if (this.terminated) {
+				this.lastError = "143";
+				this.lastCmd = "Commit('" + parameter + "') = false";
+				this.logCommand();
+				return "false";
+			}
+
+			var dataString = JSON.stringify(this.__data);
+			storageObject.persist(this.cookiename, dataString, 365);
+
+			this.lastError = "0";
+			this.lastCmd = "Commit('" + parameter + "') = true";
+			this.logCommand();
+			return "true";
+		};
+
+		// GetLastError
+		this.GetLastError = function() {
+			return this.lastError;
+		};
+
+		// GetErrorString
+		this.GetErrorString = function(errorCode) {
+			switch(errorCode) {
+				case "0": return "No error";
+				case "101": return "General exception";
+				case "102": return "General Initialization Failure";
+				case "103": return "Already Initialized";
+				case "104": return "Content Instance Terminated";
+				case "111": return "General Termination Failure";
+				case "112": return "Termination Before Initialization";
+				case "113": return "Termination After Termination";
+				case "122": return "Retrieve Data Before Initialization";
+				case "123": return "Retrieve Data After Termination";
+				case "132": return "Store Data Before Initialization";
+				case "133": return "Store Data After Termination";
+				case "142": return "Commit Before Initialization";
+				case "143": return "Commit After Termination";
+				case "201": return "General Argument Error";
+				case "301": return "General Get Failure";
+				case "351": return "General Set Failure";
+				case "391": return "General Commit Failure";
+				case "401": return "Undefined Data Model Element";
+				case "402": return "Unimplemented Data Model Element";
+				case "403": return "Data Model Element Value Not Initialized";
+				case "404": return "Data Model Element Is Read Only";
+				case "405": return "Data Model Element Is Write Only";
+				case "406": return "Data Model Element Type Mismatch";
+				case "407": return "Data Model Element Value Out Of Range";
+				case "408": return "Data Model Dependency Not Established";
+				default: return "";
+			}
+		};
+
+		// GetDiagnostic
+		this.GetDiagnostic = function(errorCode) {
+			return this.GetErrorString(errorCode);
+		};
+
+		// Process GetValue
+		this.processGetValue = function(element) {
+			this.lastError = "0";
+
+			// Handle _children and _count
+			if (element.indexOf('_children') !== -1) {
+				if (this.__data[element]) {
+					return this.__data[element];
+				} else {
+					this.lastError = "401";
+					return "";
+				}
+			}
+
+			if (element.indexOf('_count') !== -1) {
+				var baseElement = element.replace('._count', '');
+				if (baseElement === 'cmi.objectives') {
+					return this.__data['cmi.objectives._count'] || "0";
+				} else if (baseElement === 'cmi.interactions') {
+					return this.__data['cmi.interactions._count'] || "0";
+				} else {
+					this.lastError = "401";
+					return "";
+				}
+			}
+
+			// Handle array elements
+			if (element.match(/cmi\.(objectives|interactions)\.\d+\./)) {
+				return this.getArrayElement(element);
+			}
+
+			// Handle regular elements
+			if (this.__data.hasOwnProperty(element)) {
+				return this.__data[element] || "";
+			} else {
+				this.lastError = "403";
+				return "";
+			}
+		};
+
+		// Process SetValue
+		this.processSetValue = function(element, value) {
+			this.lastError = "0";
+
+			// Check for read-only elements
+			var readOnlyElements = [
+				'cmi._version', 'cmi.credit', 'cmi.entry', 'cmi.learner_id', 'cmi.learner_name',
+				'cmi.max_time_allowed', 'cmi.mode', 'cmi.scaled_passing_score', 'cmi.time_limit_action',
+				'cmi.total_time', 'cmi.objectives._children', 'cmi.objectives._count',
+				'cmi.interactions._children', 'cmi.interactions._count'
+			];
+
+			for (var i = 0; i < readOnlyElements.length; i++) {
+				if (element === readOnlyElements[i] || element.indexOf(readOnlyElements[i]) === 0) {
+					this.lastError = "404";
+					return false;
+				}
+			}
+
+			// Handle array elements
+			if (element.match(/cmi\.(objectives|interactions)\.\d+\./)) {
+				return this.setArrayElement(element, value);
+			}
+
+			// Validate and set value
+			if (this.validateElement(element, value)) {
+				this.__data[element] = value;
+				return true;
+			}
+
+			return false;
+		};
+
+		// Get array element
+		this.getArrayElement = function(element) {
+			var parts = element.split('.');
+			var arrayType = parts[1]; // objectives or interactions
+			var index = parseInt(parts[2]);
+			var property = parts.slice(3).join('.');
+
+			var count = parseInt(this.__data['cmi.' + arrayType + '._count'] || "0");
+			
+			if (index >= count) {
+				this.lastError = "301";
+				return "";
+			}
+
+			var key = 'cmi.' + arrayType + '.' + index + '.' + property;
+			return this.__data[key] || "";
+		};
+
+		// Set array element
+		this.setArrayElement = function(element, value) {
+			var parts = element.split('.');
+			var arrayType = parts[1]; // objectives or interactions
+			var index = parseInt(parts[2]);
+			var property = parts.slice(3).join('.');
+
+			var count = parseInt(this.__data['cmi.' + arrayType + '._count'] || "0");
+
+			// Auto-create new array elements
+			if (index === count) {
+				this.__data['cmi.' + arrayType + '._count'] = (count + 1).toString();
+			} else if (index > count) {
+				this.lastError = "351";
+				return false;
+			}
+
+			if (this.validateElement(element, value)) {
+				this.__data[element] = value;
+				return true;
+			}
+
+			return false;
+		};
+
+		// Validate element
+		this.validateElement = function(element, value) {
+			// Basic validation - can be expanded
+			if (element.indexOf('cmi.completion_status') !== -1) {
+				var validValues = ['completed', 'incomplete', 'not attempted', 'unknown'];
+				if (validValues.indexOf(value) === -1) {
+					this.lastError = "406";
+					return false;
+				}
+			}
+
+			if (element.indexOf('cmi.success_status') !== -1) {
+				var validValues = ['passed', 'failed', 'unknown'];
+				if (validValues.indexOf(value) === -1) {
+					this.lastError = "406";
+					return false;
+				}
+			}
+
+			return true;
+		};
+	};
+
+	// Utilities
+	this.Utils = {
+		getInitAPIData: function(initData) {
+			var stored = storageObject.retrieve(API_1484_11.cookiename);
+			if (stored) {
+				try {
+					return JSON.parse(stored);
+				} catch(e) {
+					Utils.log('Error parsing stored data: ' + e, 'error');
+					return initData;
+				}
+			}
+			return initData;
+		},
+
+		addISO8601Duration: function(duration1, duration2) {
+			// Simple ISO 8601 duration addition - PT0H0M0S format
+			// This is a simplified implementation
+			return duration1; // For now, just return the first duration
+		},
+
+		log: function(status, style) {
+			var timeFix = function(time) {
+				return (time < 10) ? '0' + time : time;
+			};
+			var d = new Date();
+			var hrs = timeFix(d.getHours());
+			var min = timeFix(d.getMinutes());
+			var sec = timeFix(d.getSeconds());
+			var tmp = (style) ? '<div class="' + style + '">' : '<div class="entry">';
+			tmp += '&gt; ' + hrs + ':' + min + ':' + sec + ' ';
+			tmp += status;
+			tmp += '</div>';
+
+			$('debug').innerHTML += tmp;
+			$('debug').scrollTop = $('debug').scrollHeight;
+		},
+
+		clearStorageData: function() {
+			var cookieNameAltVal = $('cookieNameAlt').value;
+			var nameToUse = cookieNameAltVal.length > 0 ? cookieNameAltVal : cookieName;
+
+			if (storageObject.retrieve(nameToUse)) {
+				storageObject.remove(nameToUse);
+				Utils.log(storageObject.toString() + ' "' + nameToUse + '" Cleared', 'info');
+			} else {
+				Utils.log(storageObject.toString() + ' "' + nameToUse + '" Not Found', 'error');
+			}
+		},
+
+		watchWin: function() {
+			if (scoWin && !scoWin.closed) {
+				initTimeout += 1000;
+				if (initTimeout >= initTimeoutMax) {
+					if (!API_1484_11.initialized && !timeoutErrorDisplayed) {
+						this.log('ERROR: Initialize not called within 20 seconds from launching.', 'error');
+						timeoutErrorDisplayed = true;
+					}
+				}
+				setTimeout(function() { Utils.watchWin(); }, 1000);
+			} else {
+				this.log('SCO Closed', 'info');
+				if (!hasInitialized) {
+					this.log('ERROR: Initialize was never called.', 'error');
+				}
+				if (!hasTerminated) {
+					this.log('ERROR: Terminate was never called.', 'error');
+				}
+			}
+		},
+
+		launchSCO: function() {
+			// Reset state
+			hasTerminated = false;
+			hasInitialized = false;
+			if (API_1484_11) {
+				API_1484_11.terminated = false;
+				API_1484_11.initialized = false;
+			}
+			initTimeout = 0;
+			timeoutErrorDisplayed = false;
+
+			var launchFileAltVal = $('launchFileAlt').value;
+			var cookieNameAltVal = $('cookieNameAlt').value;
+
+			if (launchFileAltVal.length > 0) {
+				launchFile = launchFileAltVal;
+			}
+
+			if (cookieNameAltVal.length > 0) {
+				API_1484_11.cookiename = cookieName = cookieNameAltVal;
+			}
+
+			try {
+				var w = ($('winW').value && $('winW').value > 0) ? $('winW').value : wWidth;
+				var h = ($('winH').value && $('winH').value > 0) ? $('winH').value : wHeight;
+
+				var opts = '';
+				opts += (wToolbar) ? 'toolbar=yes,' : '';
+				opts += (wTitlebar) ? 'titlebar=yes,' : '';
+				opts += (wLocation) ? 'location=yes,' : '';
+				opts += (wStatus) ? 'status=yes,' : '';
+				opts += (wScrollbars) ? 'scrollbars=yes,' : '';
+				opts += (wResizable) ? 'resizable=yes,' : '';
+				opts += (wMenubar) ? 'menubar=yes,' : '';
+				opts = opts.substring(0, opts.length - 1);
+
+				Utils.log("Launching SCO with options: " + opts);
+
+				scoWin = window.open(launchFile, "SCOwindow", opts + ",width=" + w + ",height=" + h);
+				scoWin.moveTo(0, 0);
+				scoWin.focus();
+
+				Utils.log('SCO Launched', 'info');
+				this.watchWin();
+			} catch (e) {
+				Utils.log('ERROR: ' + e.description, 'error');
+			}
+		},
+
+		closeSCO: function() {
+			try {
+				if (scoWin && !scoWin.closed) {
+					Utils.log('Attempting to close SCO window...', 'info');
+					scoWin.close();
+				}
+			} catch(e) {
+				Utils.log('ERROR: Unable to close SCO window (' + e.description + ')', 'error');
+			}
+		},
+
+		toggleDisplay: function(elm) {
+			$(elm).style.display = ($(elm).style.display == 'block') ? 'none' : 'block';
+		},
+
+		toggleCloseOnFinishOption: function(chkd) {
+			closeOnFinish = chkd;
+		},
+
+		toggleWindowOption: function(prop, el) {
+			window[prop] = el.checked;
+		},
+
+		enableAllWindowOptions: function() {
+			wToolbar = wTitlebar = wLocation = wStatus = wScrollbars = wResizable = wMenubar = true;
+			$('wToolbarOption').checked = true;
+			$('wTitlebarOption').checked = true;
+			$('wLocationOption').checked = true;
+			$('wStatusOption').checked = true;
+			$('wScrollbarsOption').checked = true;
+			$('wResizableOption').checked = true;
+			$('wMenubarOption').checked = true;
+		},
+
+		disableAllWindowOptions: function() {
+			wToolbar = wTitlebar = wLocation = wStatus = wScrollbars = wResizable = wMenubar = false;
+			$('wToolbarOption').checked = false;
+			$('wTitlebarOption').checked = false;
+			$('wLocationOption').checked = false;
+			$('wStatusOption').checked = false;
+			$('wScrollbarsOption').checked = false;
+			$('wResizableOption').checked = false;
+			$('wMenubarOption').checked = false;
+		}
+	};
+
+	// Initialize the API
+	this.init = function() {
+		scoWin = null;
+
+		if (useParentFolderAsCookieName) {
+			cookieName = parentFolder;
+		}
+
+		// Create SCORM 2004 API
+		API_1484_11 = new SCORM2004API(cookieName, initialState);
+
+		// Expose API to window - SCORM 2004 uses API_1484_11
+		window.API_1484_11 = API_1484_11;
+
+		// Also expose to parent frames for iframe access
+		if (window.parent && window.parent !== window) {
+			window.parent.API_1484_11 = API_1484_11;
+		}
+		if (window.top && window.top !== window) {
+			window.top.API_1484_11 = API_1484_11;
+		}
+
+		// Storage setup
+		if (typeof(Storage) !== "undefined") {
+			try {
+				if (('localStorage' in window) && window['localStorage'] && window.localStorage !== null) {
+					storageObject = localStorageObject;
+				} else {
+					storageObject = cookieStorageObject;
+				}
+			} catch(e) {
+				storageObject = cookieStorageObject;
+			}
+		} else {
+			storageObject = cookieStorageObject;
+		}
+
+		// UI setup
+		$('cookieNameAlt').value = cookieName;
+		$('winW').value = wWidth;
+		$('winH').value = wHeight;
+		$('wToolbarOption').checked = wToolbar;
+		$('wTitlebarOption').checked = wTitlebar;
+		$('wLocationOption').checked = wLocation;
+		$('wStatusOption').checked = wStatus;
+		$('wScrollbarsOption').checked = wScrollbars;
+		$('wResizableOption').checked = wResizable;
+		$('wMenubarOption').checked = wMenubar;
+
+		if (closeOnFinish) {
+			$('closeOnFinishOption').checked = true;
+		}
+
+		Utils.log('SCORM 2004 API initialized and ready', 'info');
+		Utils.log('Storage type: ' + storageObject.toString(), 'info');
+		Utils.log('API exposed as window.API_1484_11', 'info');
+
+		// Show/hide sections
+		Utils.toggleDisplay('optionSet');
+		Utils.toggleDisplay('debug');
+	};
+
+	this.$ = function(id) {
+		return document.getElementById(id);
+	};
+
+	// Storage objects
+	this.localStorageObject = {
+		persist: function(name, data, lifetime) {
+			localStorage[name] = data;
+		},
+		retrieve: function(name) {
+			return localStorage[name];
+		},
+		remove: function(name) {
+			delete localStorage[name];
+		},
+		toString: function() {
+			return "LocalStorage";
+		}
+	};
+
+	this.cookieStorageObject = {
+		persist: function(name, data, lifetime) {
+			saveCookie(name, data, lifetime);
+		},
+		retrieve: function(name) {
+			return readCookie(name);
+		},
+		remove: function(name) {
+			deleteCookie(name);
+		},
+		toString: function() {
+			return "Cookie";
+		}
+	};
+
+	window.onload = function() {
+		init();
+	};
+
+})();
+
+// Cookie Functions
+function saveCookie(name, value, days) {
+	var expires = "";
+	if (days) {
+		var date = new Date();
+		date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+		expires = "; expires=" + date.toGMTString();
+	}
+	document.cookie = name + "=" + value + expires + "; path=/";
+}
+
+function readCookie(name) {
+	var nameEQ = name + "=";
+	var ca = document.cookie.split(';');
+	for (var i = 0; i < ca.length; i++) {
+		var c = ca[i];
+		while (c.charAt(0) == ' ') c = c.substring(1, c.length);
+		if (c.indexOf(nameEQ) == 0) return c.substring(nameEQ.length, c.length);
+	}
+	return null;
+}
+
+function deleteCookie(name) {
+	saveCookie(name, "", -1);
+}
+</script>
+
+<style type="text/css">
+/* Reset and base styles */
+html, body, div, span, h1, h2, h3, h4, h5, h6, p, a, input, label, fieldset, legend {
+	margin: 0;
+	padding: 0;
+	border: 0;
+	font-size: 100%;
+	font: inherit;
+	vertical-align: baseline;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 1em;
+	background: #f0f0f0;
+	font-size: .85em;
+	font-family: verdana, arial, helvetica, geneva;
+	line-height: 1.4;
+}
+
+h1 {
+	font-family: 'Leckerli One', verdana, arial, helvetica, geneva;
+	font-size: 2em;
+	margin: .5em;
+	color: #f60;
+	text-shadow: 0 2px 1px #ccc;
+}
+
+a, a:hover, a:link, a:visited {
+	color: #3A95C5;
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+/* Layout */
+div#container {
+	border: 1px solid #ccc;
+	padding: 10px;
+	background: #fff;
+	border-radius: 10px;
+}
+
+div#header {
+	text-align: center;
+	color: #666;
+	margin: 0 0 1em 0;
+	border-bottom: 1px dotted #999;
+	padding: 0 0 1em 0;
+}
+
+div#links {
+	margin: 10px 0;
+	padding: 5px;
+	border: 1px solid #3A95C5;
+	background: #EBF4FA;
+	color: #97C6E6;
+	border-radius: 5px;
+}
+
+/* Form elements */
+fieldset {
+	padding: 10px;
+	margin: 15px 5px 20px 5px;
+	border-radius: 5px;
+	border: 1px solid #ccc;
+}
+
+legend {
+	padding: .3em .5em;
+	border-radius: 5px;
+	border: 1px solid #ccc;
+	background: #f6f6f6;
+	color: #333;
+	font-size: 1.5em;
+	font-family: 'Leckerli One', verdana, arial, helvetica, geneva;
+}
+
+legend b {
+	font-size: .70em;
+	font-family: verdana, arial, helvetica, geneva;
+}
+
+input {
+	font-size: 1em;
+	font-family: consolas, courier new, courier, fixed;
+	vertical-align: middle;
+	border: 2px solid #ccc;
+	padding: 2px 4px;
+}
+
+input:hover {
+	border: 2px solid #97C6E6;
+}
+
+input:focus {
+	border: 2px solid #3A95C5;
+}
+
+label {
+	color: #000;
+	font-size: 1em;
+	vertical-align: middle;
+	margin-right: 10px;
+}
+
+label:hover {
+	color: #3A95C5;
+}
+
+/* Debug console */
+div#debug {
+	background: #333;
+	border: 4px solid #666;
+	height: 300px;
+	overflow: auto;
+	margin: 5px;
+	font-family: consolas, "courier new", courier, fixed;
+}
+
+div.entry, div.error, div.info {
+	margin: .4em .2em;
+	text-shadow: 0 1px 2px #000;
+}
+
+div.entry {
+	color: #9c0;
+}
+
+div.info {
+	color: #ccc;
+}
+
+div.error {
+	color: #f66;
+}
+
+/* Form layout */
+.tblRow {
+	margin: 10px 0;
+	clear: both;
+}
+
+.tblRowHeader {
+	float: left;
+	width: 120px;
+	font-weight: bold;
+	color: #333;
+	margin-right: 10px;
+}
+
+.tblRowInstructions {
+	clear: both;
+	font-size: 1em;
+	color: #666;
+	margin: 20px 0 10px 0;
+	padding: .5em 0;
+	border-bottom: 1px solid #ccc;
+}
+
+.inlineOption {
+	display: inline-block;
+	margin-right: 15px;
+}
+
+/* Status boxes */
+.status-box {
+	padding: 15px;
+	margin: 10px 0;
+	border-radius: 5px;
+	border: 2px solid;
+}
+
+.status-success {
+	background: #e8f5e8;
+	border-color: #4CAF50;
+	color: #2E7D32;
+}
+
+.status-info {
+	background: #fff3cd;
+	border-color: #ffc107;
+	color: #856404;
+}
+
+.status-box h3 {
+	margin: 0 0 10px 0;
+	font-weight: bold;
+}
+
+.status-box ul {
+	margin: 0;
+	padding-left: 20px;
+}
+
+.status-box ol {
+	margin: 0;
+	padding-left: 20px;
+}
+
+/* Utility classes */
+.align-right {
+	float: right;
+}
+
+.align-center {
+	text-align: center;
+}
+
+.version {
+	color: #ccc;
+}
+
+#desc {
+	font-style: italic;
+	color: #999;
+}
+</style>
+</head>
+<body>
+<div id="container">
+	<div class="align-right version">v<script>document.write(_VERSION);</script></div>
+	<div id="header">
+		<h1>SCORM 2004 SimpleAPI</h1>
+		<div id="desc">Clean SCORM 2004 test environment</div>
+	</div>
+
+	<div class="status-box status-success">
+		<h3>🎯 SCORM 2004 Features:</h3>
+		<ul>
+			<li><strong>API_1484_11:</strong> Proper SCORM 2004 API naming</li>
+			<li><strong>Enhanced Data Model:</strong> completion_status, success_status, progress_measure</li>
+			<li><strong>Improved Error Handling:</strong> Comprehensive error codes (0-408)</li>
+			<li><strong>Array Support:</strong> objectives and interactions with proper indexing</li>
+			<li><strong>ISO 8601 Time:</strong> PT0H0M0S format for durations</li>
+		</ul>
+	</div>
+
+	<div id="links">
+		<b><a href="javascript:void(0);" onclick="Utils.launchSCO(); return false;">Launch SCO</a></b> | 
+		<a href="javascript:void(0);" onclick="Utils.clearStorageData(); return false;">Clear Storage</a> | 
+		<a href="javascript:void(0);" onclick="$('debug').innerHTML=''; return false;">Clear Event Log</a> | 
+		<a href="javascript:void(0);" onclick="document.location=document.location.href;return false;">Refresh Page</a>
+	</div>
+
+	<fieldset>
+		<legend>Event Log <b>( <a href="javascript:void(0);" onclick="Utils.toggleDisplay('debug'); return false;">Toggle</a> )</b></legend>
+		<div id="debug"></div>
+	</fieldset>
+
+	<fieldset>
+		<legend>Launch Options <b>( <a href="javascript:void(0);" onclick="Utils.toggleDisplay('optionSet'); return false;">Toggle</a> )</b></legend>
+		<div id="optionSet">
+			<div class="tblRowInstructions">Enter the path to your SCORM 2004 course's main file:</div>
+			<div class="tblRow">
+				<div class="tblRowHeader">Launch File:</div>
+				<input type="text" id="launchFileAlt" size="50" placeholder="index.html">
+			</div>
+			
+			<div class="tblRowInstructions">Storage name for this session:</div>
+			<div class="tblRow">
+				<div class="tblRowHeader">Storage Name:</div>
+				<input type="text" id="cookieNameAlt" size="50">
+			</div>
+			
+			<div class="tblRowInstructions">Window dimensions:</div>
+			<div class="tblRow">
+				<div class="tblRowHeader">Width:</div>
+				<input type="text" id="winW" size="10">
+			</div>
+			<div class="tblRow">
+				<div class="tblRowHeader">Height:</div>
+				<input type="text" id="winH" size="10">
+			</div>
+			
+			<div class="tblRowInstructions">Window features:</div>
+			<div class="tblRow">
+				<div class="tblRowHeader">Features:</div>
+				<div>
+					<div class="inlineOption">
+						<label><input type="checkbox" id="wToolbarOption" onclick="Utils.toggleWindowOption('wToolbar',this);"> Toolbar</label>
+					</div>
+					<div class="inlineOption">
+						<label><input type="checkbox" id="wTitlebarOption" onclick="Utils.toggleWindowOption('wTitlebar',this);"> Titlebar</label>
+					</div>
+					<div class="inlineOption">
+						<label><input type="checkbox" id="wLocationOption" onclick="Utils.toggleWindowOption('wLocation',this);"> Location</label>
+					</div>
+					<div class="inlineOption">
+						<label><input type="checkbox" id="wStatusOption" onclick="Utils.toggleWindowOption('wStatus',this);"> Status</label>
+					</div>
+					<div class="inlineOption">
+						<label><input type="checkbox" id="wScrollbarsOption" onclick="Utils.toggleWindowOption('wScrollbars',this);"> Scrollbars</label>
+					</div>
+					<div class="inlineOption">
+						<label><input type="checkbox" id="wResizableOption" onclick="Utils.toggleWindowOption('wResizable',this);"> Resizable</label>
+					</div>
+					<div class="inlineOption">
+						<label><input type="checkbox" id="wMenubarOption" onclick="Utils.toggleWindowOption('wMenubar',this);"> Menubar</label>
+					</div>
+				</div>
+				<div style="margin-top: 10px;">
+					<a href="#" onclick="Utils.enableAllWindowOptions();return false;">Select All</a> | 
+					<a href="#" onclick="Utils.disableAllWindowOptions();return false;">Deselect All</a>
+				</div>
+			</div>
+			
+			<div class="tblRowInstructions">Behavior options:</div>
+			<div class="tblRow">
+				<label><input type="checkbox" id="closeOnFinishOption" onclick="Utils.toggleCloseOnFinishOption(this.checked);"> Close SCO on Terminate</label>
+			</div>
+		</div>
+	</fieldset>
+
+	<div class="status-box status-info">
+		<h3>📋 SCORM 2004 Usage:</h3>
+		<ol>
+			<li><strong>Set Launch File:</strong> Enter the path to your SCORM 2004 course</li>
+			<li><strong>Click "Launch SCO":</strong> Opens course with API_1484_11 available</li>
+			<li><strong>Course connects:</strong> Should call Initialize("") successfully</li>
+			<li><strong>Monitor Event Log:</strong> Watch API calls and responses</li>
+		</ol>
+		<p><strong>Key Differences from SCORM 1.2:</strong> Uses API_1484_11 (not API), enhanced error codes, better data model with completion_status and success_status separation.</p>
+	</div>
+</div>
+</body>
+</html>
