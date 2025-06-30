@@ -1,6 +1,6 @@
 # simple-scorm-api
 
-A simple SCORM1.2 SCO run-time test environment in one file.
+A simple SCORM1.2 SCO & Advanced Scorm 2004 run-time test environment in one file.
 
 **Tweaked to work with Evolve Content**
 
@@ -9,8 +9,13 @@ Steps to work on your local environment:
 - Install a local dev server (Mamp, IIS, Apache, etc)
 - Create a new folder, and drop in simple-api-evolve.htm
 - Unzip your Scorm course into the same folder, and navigate to your browser to your local server to simple-api-evolve.htm to get started
+- Navigate to advanced-2004-tracker.html for Scorm 2004.
+- As you scroll and use the course, you'll see Evolve components complete in the console
+- Scorm 2004 Simple / Advanced API - Developed by Mint/Wesley Atkinson - Copyright 2025 Mint Interactive Solutions LTD
 
-SimpleAPI Forked from https://github.com/skfriese/simple-scorm-api
+SimpleAPI (Scorm 1.2) Forked from https://github.com/skfriese/simple-scorm-api
+
+Original Licensing below:
 
 	 * SimpleAPI for SCORM 1.2
 	 * --------------------------------------------------
@@ -63,5 +68,3 @@ SimpleAPI Forked from https://github.com/skfriese/simple-scorm-api
 
 			RELOAD TOOLS
 			Copyright (c) 2003 Oleg Liber, Bill Olivier, Phillip Beauvoir, Paul Sharples
-
-Scorm 2004 Simple / Advanced API - Developed by Mint/Wesley Atkinson - Copyright 2025 Mint Interactive Solutions LTD
