@@ -1,8 +1,8 @@
 # simple-scorm-api
 
-A simple SCORM1.2 SCO & Advanced Scorm 2004 run-time test environment in one file.
+A simple SCORM 1.2 SCO & Advanced Scorm 2004 run-time test environment in one file.
 
-**Tweaked to work with Evolve Content**
+**Tweaked to work with Evolve Content / Should work with all SCORM zips**
 
 Steps to work on your local environment:
 
